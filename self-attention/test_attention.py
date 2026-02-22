@@ -1,73 +1,80 @@
 import numpy as np
-from numpy.testing import assert_array_almost_equal
 from attention import scaled_dot_product_attention
 
-
-Q = np.array([
-    [1.0, 0.0, 1.0, 0.0],
-    [0.0, 1.0, 0.0, 1.0],
-    [1.0, 1.0, 0.0, 0.0],
+Q: np.ndarray = np.array([
+    [0.2, 0.8, 0.1],
+    [0.9, 0.1, 0.5],
+    [0.3, 0.6, 0.7],
+    [0.5, 0.5, 0.0],
 ], dtype=np.float64)
 
-K = np.array([
-    [1.0, 0.0, 1.0, 0.0],
-    [0.0, 1.0, 0.0, 1.0],
-    [1.0, 1.0, 0.0, 0.0],
+K: np.ndarray = np.array([
+    [0.6, 0.3, 0.4],
+    [0.1, 0.9, 0.2],
+    [0.7, 0.2, 0.8],
 ], dtype=np.float64)
 
-V = np.array([
-    [1.0, 0.0],
-    [0.0, 1.0],
-    [1.0, 1.0],
+V: np.ndarray = np.array([
+    [1.0, 0.5, 0.0],
+    [0.0, 1.0, 0.5],
+    [0.5, 0.0, 1.0],
 ], dtype=np.float64)
 
 
-def compute_expected_output():
-    dk = K.shape[-1]
-    scaling_factor = np.sqrt(dk)
-    scores = Q @ K.T
-    scaled_scores = scores / scaling_factor
-    max_per_row = np.max(scaled_scores, axis=1, keepdims=True)
-    shifted = scaled_scores - max_per_row
-    exponentials = np.exp(shifted)
-    row_sums = np.sum(exponentials, axis=1, keepdims=True)
-    expected_weights = exponentials / row_sums
-    expected_output = expected_weights @ V
-    return expected_output, expected_weights
-
-
-def test_weights_sum_to_one(attention_weights):
-    row_sums = np.sum(attention_weights, axis=1)
-    expected_sums = np.ones(attention_weights.shape[0])
-    try:
-        assert_array_almost_equal(row_sums, expected_sums, decimal=6)
+def test_weights_sum_to_one(attention_weights: np.ndarray) -> bool:
+    row_sums: np.ndarray = np.sum(attention_weights, axis=1)
+    all_close: bool = np.allclose(row_sums, 1.0, atol=1e-6)
+    if all_close:
         print("  test_weights_sum_to_one: PASSED")
-        return True
-    except AssertionError:
-        print("  test_weights_sum_to_one: FAILED")
-        return False
+    else:
+        print(f"  test_weights_sum_to_one: FAILED (row sums: {row_sums})")
+    return all_close
 
 
-def test_output_shape(output):
+def test_weights_non_negative(attention_weights: np.ndarray) -> bool:
+    all_non_negative: bool = bool(np.all(attention_weights >= 0.0))
+    if all_non_negative:
+        print("  test_weights_non_negative: PASSED")
+    else:
+        negative_count: int = int(np.sum(attention_weights < 0.0))
+        print(f"  test_weights_non_negative: FAILED ({negative_count} negative values)")
+    return all_non_negative
+
+
+def test_output_shape(output: np.ndarray) -> bool:
     expected_shape = (Q.shape[0], V.shape[1])
     if output.shape == expected_shape:
         print(f"  test_output_shape: PASSED (shape={output.shape})")
         return True
     else:
-        print(f"  test_output_shape: FAILED (esperado={expected_shape}, obtido={output.shape})")
+        print(
+            f"  test_output_shape: FAILED (expected={expected_shape}, obtained={output.shape})"
+        )
         return False
 
 
-def test_numerical_correctness(output, attention_weights):
-    expected_output, expected_weights = compute_expected_output()
-    try:
-        assert_array_almost_equal(attention_weights, expected_weights, decimal=6)
-        assert_array_almost_equal(output, expected_output, decimal=6)
+def test_numerical_correctness(
+    output: np.ndarray, attention_weights: np.ndarray
+) -> bool:
+    dk: int = K.shape[-1]
+    raw_scores: np.ndarray = (Q @ K.T) / np.sqrt(dk)
+    stabilized: np.ndarray = raw_scores - np.max(raw_scores, axis=1, keepdims=True)
+    exp_scores: np.ndarray = np.exp(stabilized)
+    expected_weights: np.ndarray = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
+    expected_output: np.ndarray = expected_weights @ V
+
+    weights_match: bool = np.allclose(attention_weights, expected_weights, atol=1e-6)
+    output_match: bool = np.allclose(output, expected_output, atol=1e-6)
+
+    if weights_match and output_match:
         print("  test_numerical_correctness: PASSED")
-        return True
-    except AssertionError:
+    else:
         print("  test_numerical_correctness: FAILED")
-        return False
+        if not weights_match:
+            print(f"    attention_weights mismatch (max diff: {np.max(np.abs(attention_weights - expected_weights)):.2e})")
+        if not output_match:
+            print(f"    output mismatch (max diff: {np.max(np.abs(output - expected_output)):.2e})")
+    return weights_match and output_match
 
 
 if __name__ == "__main__":
@@ -83,19 +90,22 @@ if __name__ == "__main__":
     print("\n" + "=" * 50)
     print("OUTPUTS")
     print("=" * 50)
-    print(f"\nAttention Weights (shape={attention_weights.shape}):\n{attention_weights}")
+    print(
+        f"\nAttention Weights (shape={attention_weights.shape}):\n{attention_weights}"
+    )
     print(f"\nOutput (shape={output.shape}):\n{output}")
 
     print("\n" + "=" * 50)
-    print("TESTES")
+    print("TESTS")
     print("=" * 50)
 
     results = [
         test_weights_sum_to_one(attention_weights),
+        test_weights_non_negative(attention_weights),
         test_output_shape(output),
         test_numerical_correctness(output, attention_weights),
     ]
 
     total = len(results)
     passed = sum(results)
-    print(f"\nResultado: {passed}/{total} testes passaram.")
+    print(f"\nResult: {passed}/{total} tests passed.")
